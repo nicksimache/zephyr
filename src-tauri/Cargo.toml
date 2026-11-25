@@ -1,0 +1,46 @@
+[package]
+name = "zephyr"
+version = "0.2.0"
+edition = "2021"
+description = "Local inference gateway and request inspector"
+default-run = "zephyr"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-plugin-single-instance"]
+custom-protocol = ["tauri?/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+async-stream = "0.3"
+async-trait = "0.1"
+axum = "0.8"
+axum-server = { version = "0.9", features = ["tls-rustls-ring"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+fs2 = "0.4"
+futures-util = "0.3"
+if-addrs = "0.15"
+rcgen = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-manual-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+tauri = { version = "2", optional = true, features = ["tray-icon"] }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "process", "io-util"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+tower-http = { version = "0.6", features = ["cors"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+
+[profile.release.package.zephyr]
+codegen-units = 8
