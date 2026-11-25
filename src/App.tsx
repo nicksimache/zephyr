@@ -4,6 +4,8 @@ import {
   HardDrive, Link2, Minus, Plus, Power, RefreshCw, RotateCcw, Server, Settings2, Trash2, X,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import feather from '../feather-432476-16px.png'
 import { agentAvatars, avatarForAgent, AvatarImage } from './AgentAvatar'
 import {
   type Activity, type Agent, type AgentConfig, type Health, type Model,
@@ -30,7 +32,7 @@ export function App() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const panes = useRef<HTMLDivElement>(null)
-  const [explorerWidth, setExplorerWidth] = useState(248)
+  const [explorerWidth, setExplorerWidth] = useState(214)
 
   const visibleAgents = agents.filter(agent => !agent.deleted)
   const treeModels = [...models, ...[...new Set(visibleAgents.map(agent => agent.model))]
@@ -111,7 +113,8 @@ export function App() {
     ...requests.items.map(request => request.model), filters.model].filter(Boolean))].sort()
 
   return <div className="app-shell">
-    <header className="app-bar">
+    <header className="app-bar" data-tauri-drag-region={desktop || undefined}>
+      {desktop && <img className="window-icon" src={feather} alt="" width={12} height={12} draggable={false} />}
       <nav className="app-nav" aria-label="Workspace">
         <button className={view === 'logs' ? 'current' : ''} aria-current={view === 'logs' ? 'page' : undefined} onClick={() => changeView('logs')}><ClipboardList size={15} /> Request logs</button>
         <button className={view === 'usage' ? 'current' : ''} aria-current={view === 'usage' ? 'page' : undefined}
@@ -119,14 +122,13 @@ export function App() {
         <button className={view === 'connections' ? 'current' : ''} aria-current={view === 'connections' ? 'page' : undefined}
           onClick={() => changeView('connections')}><Link2 size={15} /> Connections</button>
       </nav>
-      <div className="spacer" />
-      <div className="app-actions">
-        <button className="icon-button" title="Gateway settings" aria-label="Gateway settings" disabled={!api || !reachable} onClick={() => {
-          if (api) void action('Loading settings…', async () => setModal({ type: 'settings', settings: await api.json<Settings>('/settings') }))
-        }}><Settings2 size={17} /></button>
-        {desktop && <button className="icon-button" title="Minimize to tray" aria-label="Minimize to tray"
-          onClick={() => void invoke('hide_to_tray').catch(error => setNotice(describe(error)))}><Minus size={17} /></button>}
-      </div>
+      <div className="spacer" data-tauri-drag-region={desktop || undefined} />
+      {desktop && <div className="window-controls">
+        <button className="icon-button" title="Minimize window" aria-label="Minimize window"
+          onClick={() => void getCurrentWindow().minimize().catch(error => setNotice(describe(error)))}><Minus size={16} /></button>
+        <button className="icon-button window-close" title="Close to tray" aria-label="Close window"
+          onClick={() => void invoke('hide_to_tray').catch(error => setNotice(describe(error)))}><X size={16} /></button>
+      </div>}
     </header>
     {(notice || contextUnavailable || setupNeeded || busy) && <div className={'notice' + (notice || contextUnavailable ? ' error-notice' : '')} role="status">
       {notice || contextUnavailable ? <CircleAlert size={15} /> : <ActivityIcon size={15} />}
@@ -140,7 +142,7 @@ export function App() {
     </div>}
     <div className="panes" ref={panes} style={{ gridTemplateColumns: explorerWidth + 'px minmax(0, 1fr)' }}>
       <aside className="left-pane" aria-label="Agent explorer">
-        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2 className="ellipsize" title="Agent explorer">Agent explorer</h2>
+        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2>Models</h2>
           <span className="count-label mono">{models.length}</span><div className="spacer" />
           <button className="icon-button" title="Refresh models" aria-label="Refresh models" onClick={() => void refreshModels()} disabled={!api}><RefreshCw size={14} /></button>
           <button className="icon-button add-agent" title="New agent" aria-label="New agent" disabled={!createModel}
@@ -192,7 +194,9 @@ export function App() {
           change={next => { setFilters(next); setPicked('') }} />}
       </main>
     </div>
-    <StatusBar health={health} reachable={reachable} activities={activities} />
+    <StatusBar health={health} reachable={reachable} activities={activities} openSettings={api && reachable ? () => {
+      void action('Loading settings…', async () => setModal({ type: 'settings', settings: await api.json<Settings>('/settings') }))
+    } : undefined} />
     {modal?.type === 'create' && <AgentDialog close={close} model={modal.model} models={models.map(model => model.name)} save={saveAgent} />}
     {modal?.type === 'edit' && <AgentDialog close={close} agent={modal.agent} model={modal.agent.model} models={models.map(model => model.name)} save={saveAgent} />}
     {api && modal?.type === 'settings' && <SettingsDialog settings={modal.settings} activePort={health?.port || modal.settings.port} close={close}
@@ -294,7 +298,9 @@ function Splitter({ label, move }: { label: string; move: (x: number) => void })
     }} />
 }
 
-function StatusBar({ health, reachable, activities }: { health: Health | null; reachable: boolean; activities: Activity[] }) {
+function StatusBar({ health, reachable, activities, openSettings }: {
+  health: Health | null; reachable: boolean; activities: Activity[]; openSettings?: () => void
+}) {
   const active = activities.filter(job => job.status === 'generating')
   const queued = activities.length - active.length
   const ollama = reachable ? health?.ollama : undefined
@@ -307,5 +313,7 @@ function StatusBar({ health, reachable, activities }: { health: Health | null; r
     <div className="spacer" />
     <span title={active[0]?.model}><ActivityIcon size={12} /> <span className="status-activity">{active.length ? active[0].model : 'Idle'}</span></span>
     <span className="request-counts"><b className="mono">{active.length}</b> active <b className="mono">{queued}</b> queued</span>
+    <button className="icon-button" title="Gateway settings" aria-label="Gateway settings"
+      disabled={!openSettings} onClick={openSettings}><Settings2 size={15} /></button>
   </footer>
 }

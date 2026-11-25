@@ -62,12 +62,14 @@ button, input, select, textarea, summary, [role="separator"] { outline: none; }
 .app-shell { @apply flex h-full min-h-0 flex-col overflow-hidden; }
 .app-bar {
   @apply flex shrink-0 items-center;
-  height: 49px;
-  padding-left: 10px;
+  height: 40px;
+  padding: 0 6px 0 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   user-select: none;
 }
+.window-icon { flex-shrink: 0; margin-right: 8px; pointer-events: none; }
+.app-bar > .spacer { align-self: stretch; }
 .app-nav { @apply flex h-full items-stretch gap-1; }
 .app-nav button {
   @apply relative flex items-center gap-2 px-3;
@@ -79,8 +81,9 @@ button, input, select, textarea, summary, [role="separator"] { outline: none; }
 .app-nav button:hover { color: var(--text); background: var(--paper); }
 .app-nav button.current { color: var(--accent); background: var(--wash); }
 .app-nav button.current::after { content: ""; position: absolute; inset: auto 0 -1px; height: 2px; background: var(--accent); }
-.app-actions { @apply flex items-center gap-2; padding: 0 12px; }
-.app-actions .icon-button { width: 29px; height: 29px; }
+.window-controls { @apply flex shrink-0 items-center gap-1; }
+.window-controls .icon-button { width: 30px; height: 29px; }
+.window-controls .window-close:hover { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
 .notice {
   @apply flex shrink-0 items-center gap-2;
   min-height: 34px;

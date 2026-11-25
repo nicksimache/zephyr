@@ -9,7 +9,64 @@ Zephyr is a Windows desktop gateway for Ollama inference. It gives Lavender a lo
 3. Select **Download Qwen test model** if the model is absent. You can also run `ollama pull qwen2.5:0.5b`. [Qwen 2.5 model](https://ollama.com/library/qwen2.5:0.5b)
 4. Create an agent under a model or start making HTTP requests at **http://127.0.0.1:47833**.
 
-Closing the window hides it in the system tray and leaves the API running. Use **Show Zephyr** or **Quit Zephyr** in the tray menu. Drag a divider to resize the panes, or focus it and use the arrow keys.
+Use **−** to minimize Zephyr to the taskbar. Use **×** to hide it in the system tray and keep the API available to Lavender. The tray menu has **Show Zephyr** and **Quit Zephyr**. Drag the blank space beside the navigation to move the window. Drag the explorer divider or focus it and use the arrow keys to resize the explorer. The gear in the bottom-right status bar opens gateway settings.
+
+## Connect Lavender
+
+Use Zephyr as Lavender’s local inference provider in place of the Claude or ChatGPT API integrations. Run Zephyr and Ollama on the computer that makes Lavender’s HTTP requests. Zephyr’s default base URL is `http://127.0.0.1:47833`. Use the port shown in Zephyr’s status bar if it differs. The loopback API accepts JSON requests without an API key.
+
+### Coding agent handoff
+
+Give a coding agent access to the Lavender checkout and the path to this README. Use this prompt with your local paths.
+
+```text
+Open Lavender at <path to the Lavender checkout> and read Zephyr's README at <path to Zephyr/README.md>, starting with Connect Lavender.
+Trace Lavender's existing Claude and ChatGPT inference paths. Add Zephyr as a selectable local provider and use it for the requested inference flows. Match Lavender's existing provider and settings patterns.
+Use http://127.0.0.1:47833 by default. Make the base URL and installed Ollama model configurable. Send requests from Lavender's backend or native process through a Zephyr adapter. Zephyr mode requires no API key or Authorization header.
+Use POST /chat with Lavender's message history unless the flow specifically needs Zephyr-managed agent context. Map messages, streaming updates, tool calls and errors back to the same Lavender response types the existing flows use.
+Run the local gateway smoke test below, then verify a representative Lavender prompt with Zephyr selected and the Claude and ChatGPT API keys unset. Show the chosen model and the Zephyr request ID.
+```
+
+### Verify the gateway
+
+Start Zephyr, confirm `GET /health` reports `ollama.ready: true`, and select an exact model name from `GET /models`. The example uses the Qwen model available from Zephyr’s **Download Qwen test model** action.
+
+```powershell
+$base = 'http://127.0.0.1:47833'
+$health = Invoke-RestMethod "$base/health"
+if (-not $health.ollama.ready) { throw 'Start or update Ollama from Zephyr.' }
+Invoke-RestMethod "$base/models" | Select-Object name
+
+$payload = @{
+  model = 'qwen2.5:0.5b' # Replace with an installed model if needed.
+  messages = @(@{ role = 'user'; content = 'Reply with a short greeting.' })
+  stream = $false
+  run_id = 'lavender-test'
+  task_id = 'first-prompt'
+} | ConvertTo-Json -Depth 8
+$reply = Invoke-RestMethod "$base/chat" -Method Post -ContentType 'application/json' -Body $payload
+$reply | Select-Object status, request_id
+$reply.message.content
+```
+
+### Provider contract
+
+- **Transport.** Send `Content-Type: application/json` to Zephyr’s routes using Lavender’s native or server-side HTTP client. Zephyr uses its own JSON and NDJSON schemas, so a Zephyr adapter is required for callers built around the OpenAI or Anthropic SDKs. Browser-origin requests are restricted to Zephyr’s desktop UI and its development URL.
+- **Messages and model selection.** Use `POST /chat` with `model` and a nonempty `messages` array. Map instructions to `system` messages, and conversation turns to `user`, `assistant`, and `tool` messages. Use the exact model name returned by `GET /models`. Keep history in Lavender for stateless calls and send the relevant history with each request.
+- **Agent-managed context.** Create an agent with `POST /agents` and save its returned `id` per conversation. Call `POST /agents/{id}/chat` without a `model` field. The default `append` mode takes only the new turns. If Lavender sends a complete transcript, use `context_mode: "replace"`. The agent’s configured system prompt is prepended in either mode. The `/agents/{id}/context` endpoint reads or clears its saved conversation, depending on the method.
+- **Results and streaming.** With `stream: false`, read the terminal JSON object and use `message.content` when `status` is `completed`. With `stream: true`, read newline-delimited JSON and buffer partial lines across network chunks. Treat `start` as admission, render fragments from `delta.message`, and use the assembled `done.message`, `done.status`, and `done.error` to finish the turn. Handle non-2xx responses before reading the stream. An HTTP 200 stream can end in failure. EOF without a terminal frame is an incomplete response.
+- **Tools and structured output.** Map requested tools to Ollama’s `tools` definitions. Read `message.tool_calls` and optional `message.thinking` when the model provides them. Lavender runs approved tools and supplies results as `tool` messages. For structured output, use `format: "json"` or a JSON Schema object.
+- **Cancellation and errors.** `X-Zephyr-Request-Id` identifies the admitted request. Cancel local work with `DELETE /requests/{id}` or close the streaming response. For a request forwarded to a peer, close the stream to signal cancellation on that host. Surface gateway, Ollama readiness, and terminal errors in Lavender’s existing error UI. An agent context error leaves its saved conversation intact.
+- **Run and task traces.** Send Lavender’s `run_id` and `task_id` for each request. Store `X-Zephyr-Log-Id` for forwarded calls when present and `X-Zephyr-Request-Id` for local calls. Use that ID with `GET /logs/{id}` on Lavender’s Zephyr instance. Use `GET /usage?run_id=<id>` for reported token counts and `GET /logs/export?run_id=<id>` for a JSONL file of finalized requests.
+- **Paired machines.** Use `GET /peers/{id}/models` and `POST /peers/{id}/chat` on the local gateway for a paired computer. The remote route accepts the same stateless payload and stream format. See [Run models on X and Y](#run-models-on-x-and-y) for pairing.
+
+Export one Lavender run from **Request logs**, or fetch it directly.
+
+```powershell
+curl.exe -fsS 'http://127.0.0.1:47833/logs/export?run_id=lavender-test' --output lavender-run.jsonl
+```
+
+See [HTTP API](#http-api) for the route list, request fields, examples, and error behavior.
 
 ## Features
 
@@ -107,8 +164,8 @@ Zephyr binds to IPv4 loopback. Use native HTTP clients with JSON bodies and `Con
 | GET /settings | Read persisted settings |
 | PUT /settings | Save the port, default context size, and default keep-alive |
 | GET /agents | List agents. Use include_deleted=true to include archived configurations. |
-| POST /agents | Create an agent. Set name, model, and optionally system_prompt, options, and keep_alive. |
-| PATCH /agents/{id} | Update provided agent fields. Null keep_alive inherits the default. The options object replaces the previous options. |
+| POST /agents | Create an agent. Set name, model, and optionally system_prompt, options, keep_alive, and avatar. |
+| PATCH /agents/{id} | Update provided agent fields. Null keep_alive inherits the default. The options object replaces the previous options. The optional avatar identifies a cat selected in Zephyr’s agent editor. |
 | DELETE /agents/{id} | Archive an agent and preserve its history |
 | POST /agents/{id}/chat | Run inference against the agent's current context |
 | GET /agents/{id}/context | Read the active context and last committed sequence |
@@ -226,18 +283,3 @@ Each admitted request produces one terminal record. Forwarded requests can compl
 | status, error, done_reason, context_committed | Terminal outcome, failure or cancellation details, upstream stop reason, and whether context advanced |
 
 `GET /logs` and agent histories return `{items,next_before}` newest first. Use `before=<next_before>` until the cursor is null. The default page size is 30 with a maximum of 100. Match exact `model`, `agent` UUID, `peer` UUID, `run_id`, `task_id`, or `status`. Use `full=true` to include complete entries. `GET /logs/export` accepts the same filters and returns all matches in one stream. `GET /usage` applies the same filters. Its `total_tokens` adds input and output; cached input is a subset of input whenever Ollama reports it. Requests missing one or both counts are included in `requests_without_counts`.
-
-## Connect Lavender
-
-1. Add a local provider adapter pointed at `http://127.0.0.1:47833`. Probe `GET /health` for `ollama.ready` and `GET /models` for available local models.
-2. Use one owner for conversation history. If Lavender already manages history, use `POST /chat` with the complete relevant message list, or call an agent with `context_mode: "replace"` to also save the submitted history under that agent. If Zephyr manages the history, create an agent for each independent Lavender conversation and send only new messages using the default `append` mode. The agent’s configured system prompt is prepended in either agent mode, so put each system instruction in one place. Zephyr sends the resulting context to Ollama on every call. Shorter relevant history reduces the input token count.
-3. Pass Lavender's `run_id` and `task_id` on each call. Fetch `GET /logs/export?run_id=<id>` on Lavender’s Zephyr instance to reconstruct a run, including its forwarded calls. For one response, store `X-Zephyr-Log-Id` if present, or `X-Zephyr-Request-Id` for a local call, and read `GET /logs/{id}`.
-4. Map returned assistant content, reasoning and tool calls into Lavender's response types. Lavender runs approved tools and submits the result with role `tool` in the next request.
-5. Use the stream's terminal status to mark request outcomes. Zephyr uses its own HTTP and NDJSON schemas. The Lavender adapter maps Anthropic or OpenAI request and response types to Zephyr's fields.
-6. For inference on a paired computer, use its `/peers/{id}/chat` route with the same stateless request body. Read that computer’s models through `/peers/{id}/models`.
-
-To give Lavender a file for one development run, filter by its run ID in **Request logs** and select **Export JSONL**, or fetch the same export directly.
-
-```powershell
-curl.exe -fsS 'http://127.0.0.1:47833/logs/export?run_id=dev-run-42' --output lavender-run.jsonl
-```
