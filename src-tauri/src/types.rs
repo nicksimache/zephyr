@@ -54,6 +54,8 @@ pub struct AgentConfig {
     #[serde(default)]
     pub options: Options,
     pub keep_alive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
 }
 
 impl AgentConfig {
@@ -80,6 +82,8 @@ pub struct AgentPatch {
     pub options: Option<Options>,
     #[serde(default, deserialize_with = "nullable")]
     pub keep_alive: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub avatar: Option<Option<String>>,
 }
 
 fn nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -106,6 +110,9 @@ impl AgentPatch {
         }
         if let Some(duration) = self.keep_alive {
             config.keep_alive = duration;
+        }
+        if let Some(avatar) = self.avatar {
+            config.avatar = avatar;
         }
     }
 }

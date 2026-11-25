@@ -82,18 +82,18 @@ export function Connections({ api }: { api: GatewayApi | null }) {
 
   return <>
     <header className="pane-header">
-      <Link2 size={16} className="turquoise" /><h1>Connections</h1><div className="spacer" />
+      <Link2 size={16} className="accent" /><h1>Connections</h1><div className="spacer" />
       <button className="icon-button" type="button" title="Refresh connections" aria-label="Refresh connections" disabled={!api || Boolean(busy)}
         onClick={() => void perform('Refreshing…', reload)}><RefreshCw size={14} /></button>
     </header>
     <div className="connections-scroll scrollable">
       {busy && <p className="subtle connection-feedback" role="status">{busy}</p>}
-      {feedback && <p className={'connection-feedback ' + (feedback.error ? 'error-text' : 'turquoise')} role="status">{feedback.text}</p>}
+      {feedback && <p className={'connection-feedback ' + (feedback.error ? 'error-text' : 'accent')} role="status">{feedback.text}</p>}
       {api && settings && <>
         <section className="connection-card">
           <div className="connection-heading">
-            <Server size={16} className="turquoise" /><h2>This computer</h2><div className="spacer" />
-            <span className={'connection-state ' + (settings.share.active ? 'turquoise' : 'subtle')}>
+            <Server size={16} className="accent" /><h2>This computer</h2><div className="spacer" />
+            <span className={'connection-state ' + (settings.share.active ? 'accent' : 'subtle')}>
               <i className={'dot ' + (settings.share.active ? 'loaded' : 'idle')} />
               {settings.share.active ? 'Sharing models' : 'Sharing off'}
             </span>
@@ -135,7 +135,7 @@ export function Connections({ api }: { api: GatewayApi | null }) {
           </form>}
         </section>
         <section className="connection-card">
-          <div className="connection-heading"><Link2 size={16} className="turquoise" /><h2>Pair another computer</h2></div>
+          <div className="connection-heading"><Link2 size={16} className="accent" /><h2>Pair another computer</h2></div>
           <form className="connection-form" onSubmit={pair}>
             <div className="pair-fields">
               <label className="connection-label">Computer name<input value={name} onChange={event => setName(event.target.value)}
@@ -147,7 +147,7 @@ export function Connections({ api }: { api: GatewayApi | null }) {
           </form>
         </section>
         {settings.peers.length > 0 && <section className="connection-card">
-          <div className="connection-heading"><Server size={16} className="turquoise" /><h2>Paired computers</h2></div>
+          <div className="connection-heading"><Server size={16} className="accent" /><h2>Paired computers</h2></div>
           {settings.peers.map(peer => <PeerRow key={peer.id} peer={peer} api={api} revision={revision} busy={Boolean(busy)}
             report={error => setFeedback({ text: error, error: true })}
             forget={() => void perform('Removing pairing…', async () => {

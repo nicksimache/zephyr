@@ -28,7 +28,7 @@ export function Usage({ api, revision }: { api: GatewayApi | null; revision: num
   const format = (value?: number | null) => value?.toLocaleString() ?? '—'
 
   return <>
-    <div className="pane-header"><BarChart3 size={17} className="turquoise" /><h1>Token usage</h1></div>
+    <div className="pane-header"><BarChart3 size={17} className="accent" /><h1>Token usage</h1></div>
     <div className="usage-controls">
       <label>Run ID <input value={run} onChange={event => setRun(event.target.value)} placeholder="All runs" /></label>
       {run && <button className="text-button" onClick={() => setRun('')}>Clear</button>}
@@ -52,7 +52,7 @@ export function Usage({ api, revision }: { api: GatewayApi | null; revision: num
         <tbody>{models.map(([model, row]) => <tr key={model}>
           <th scope="row" className="mono ellipsize" title={model}>{model}</th>
           <td className="mono">{format(row.requests)}</td><td className="mono">{format(row.input_tokens)}</td><td className="mono">{format(row.cached_input_tokens)}</td>
-          <td className="mono">{format(row.output_tokens)}</td><td className="mono turquoise">{format(row.total_tokens)}</td>
+          <td className="mono">{format(row.output_tokens)}</td><td className="mono accent">{format(row.total_tokens)}</td>
         </tr>)}</tbody>
       </table> : !error && <div className="empty log-empty"><ChartNoAxesColumn size={24} strokeWidth={1.5} />
         <h2>{usage ? 'No usage for this filter' : 'Loading token usage…'}</h2>

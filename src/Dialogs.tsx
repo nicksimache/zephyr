@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { Shuffle, X } from 'lucide-react'
+import { agentAvatars, avatarForAgent, AvatarImage, randomAvatar } from './AgentAvatar'
 import { type Agent, type AgentConfig, type Options, type Settings, describe } from './api'
 
 export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -21,6 +22,8 @@ export function AgentDialog({ agent, model, models, close, save }: {
 }) {
   const [name, setName] = useState(agent?.name || '')
   const [modelName, setModelName] = useState(agent?.model || model)
+  const [avatar, setAvatar] = useState(() => agent ? avatarForAgent(agent).id : randomAvatar().id)
+  const avatarGroup = useId()
   const [prompt, setPrompt] = useState(agent?.system_prompt || '')
   const [options, setOptions] = useState(agent?.options && Object.keys(agent.options).length ? JSON.stringify(agent.options, null, 2) : '')
   const [keepAlive, setKeepAlive] = useState(agent?.keep_alive || '')
@@ -34,7 +37,7 @@ export function AgentDialog({ agent, model, models, close, save }: {
     try {
       const parsed: unknown = options.trim() ? JSON.parse(options) : {}
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Inference options must be a JSON object.')
-      await save({ name: name.trim(), model: modelName, system_prompt: prompt, options: parsed as Options, keep_alive: keepAlive.trim() || null })
+      await save({ name: name.trim(), model: modelName, avatar, system_prompt: prompt, options: parsed as Options, keep_alive: keepAlive.trim() || null })
       close()
     } catch (error) {
       setError(describe(error))
@@ -44,17 +47,32 @@ export function AgentDialog({ agent, model, models, close, save }: {
   }
 
   return <Dialog title={agent ? 'Edit agent' : 'New agent'} onClose={close}>
-    <form className="dialog-form" onSubmit={submit}>
-      <div className="form-grid">
-        <label>Name<input value={name} onChange={event => setName(event.target.value)} required maxLength={120} autoFocus /></label>
-        <label>Model<select value={modelName} onChange={event => setModelName(event.target.value)} required>
-          {[...new Set([modelName, ...models])].filter(Boolean).map(item => <option key={item}>{item}</option>)}
-        </select></label>
+    <form className="dialog-form agent-form" onSubmit={submit}>
+      <div className="agent-form-fields scrollable">
+        <div className="form-grid">
+          <label>Name<input value={name} onChange={event => setName(event.target.value)} required maxLength={120} autoFocus /></label>
+          <label>Model<select value={modelName} onChange={event => setModelName(event.target.value)} required>
+            {[...new Set([modelName, ...models])].filter(Boolean).map(item => <option key={item}>{item}</option>)}
+          </select></label>
+        </div>
+        <fieldset className="avatar-picker" aria-labelledby={avatarGroup}>
+          <div className="avatar-picker-header">
+            <span id={avatarGroup}>Agent icon</span>
+            <button className="button compact" type="button" onClick={() => setAvatar(randomAvatar(avatar).id)}><Shuffle size={13} /> Randomize</button>
+          </div>
+          <div className="avatar-options">
+            {agentAvatars.map(choice => <label key={choice.id} className="avatar-option" title={choice.label}>
+              <input className="sr-only" type="radio" name={avatarGroup} aria-label={choice.label} value={choice.id}
+                checked={avatar === choice.id} onChange={() => setAvatar(choice.id)} />
+              <span className="avatar-choice"><AvatarImage avatar={choice} size={26} /></span>
+            </label>)}
+          </div>
+        </fieldset>
+        <label>System prompt<textarea rows={2} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Optional" /></label>
+        <label>Inference options<textarea rows={2} value={options} onChange={event => setOptions(event.target.value)}
+          placeholder={'{"temperature": 0.3, "num_ctx": 4096}'} className="mono" spellCheck={false} /></label>
+        <label>Keep-alive<input value={keepAlive} onChange={event => setKeepAlive(event.target.value)} placeholder="Use gateway default" /></label>
       </div>
-      <label>System prompt<textarea rows={4} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Optional" /></label>
-      <label>Inference options<textarea rows={3} value={options} onChange={event => setOptions(event.target.value)}
-        placeholder={'{"temperature": 0.3, "num_ctx": 4096}'} className="mono" spellCheck={false} /></label>
-      <label>Keep-alive<input value={keepAlive} onChange={event => setKeepAlive(event.target.value)} placeholder="Use gateway default" /></label>
       {error && <p className="error-text" role="alert">{error}</p>}
       <div className="dialog-actions">
         <button className="button" type="button" onClick={close}>Cancel</button>

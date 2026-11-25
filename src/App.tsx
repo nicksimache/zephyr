@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Activity as ActivityIcon, BarChart3, Bot, ChevronDown, ChevronRight, CircleAlert, Clipboard, ClipboardList, Database,
+  Activity as ActivityIcon, BarChart3, ChevronDown, ChevronRight, CircleAlert, Clipboard, ClipboardList, Database,
   HardDrive, Link2, Minus, Plus, Power, RefreshCw, RotateCcw, Server, Settings2, Trash2, X,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
-import icon from '../src-tauri/icons/icon.png'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import feather from '../feather-432476-16px.png'
+import { agentAvatars, avatarForAgent, AvatarImage } from './AgentAvatar'
 import {
   type Activity, type Agent, type AgentConfig, type Health, type Model,
   type Settings, type Summary, copy, describe, desktop, formatSize,
@@ -30,13 +32,14 @@ export function App() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const panes = useRef<HTMLDivElement>(null)
-  const [explorerWidth, setExplorerWidth] = useState(228)
+  const [explorerWidth, setExplorerWidth] = useState(214)
 
   const visibleAgents = agents.filter(agent => !agent.deleted)
   const treeModels = [...models, ...[...new Set(visibleAgents.map(agent => agent.model))]
     .filter(name => !models.some(model => model.name === name))
     .map(name => ({ name, size: 0, digest: '' }))]
   const modelName = chosenModel || treeModels[0]?.name || ''
+  const createModel = models.find(model => model.name === modelName)?.name ?? models[0]?.name
   const agent = view === 'logs' ? visibleAgents.find(item => item.id === selectedAgent) : undefined
   const logSearch = new URLSearchParams(Object.entries(filters).filter(([, value]) => Boolean(value.trim()))
     .map(([key, value]) => [key, value.trim()])).toString()
@@ -110,8 +113,8 @@ export function App() {
     ...requests.items.map(request => request.model), filters.model].filter(Boolean))].sort()
 
   return <div className="app-shell">
-    <header className="app-bar">
-      <div className="brand"><img src={icon} alt="" width={25} height={25} /><span>Zephyr</span></div>
+    <header className="app-bar" data-tauri-drag-region={desktop || undefined}>
+      {desktop && <img className="window-icon" src={feather} alt="" width={12} height={12} draggable={false} />}
       <nav className="app-nav" aria-label="Workspace">
         <button className={view === 'logs' ? 'current' : ''} aria-current={view === 'logs' ? 'page' : undefined} onClick={() => changeView('logs')}><ClipboardList size={15} /> Request logs</button>
         <button className={view === 'usage' ? 'current' : ''} aria-current={view === 'usage' ? 'page' : undefined}
@@ -119,14 +122,13 @@ export function App() {
         <button className={view === 'connections' ? 'current' : ''} aria-current={view === 'connections' ? 'page' : undefined}
           onClick={() => changeView('connections')}><Link2 size={15} /> Connections</button>
       </nav>
-      <div className="spacer" />
-      <div className="app-actions">
-        <button className="icon-button" title="Gateway settings" aria-label="Gateway settings" disabled={!api || !reachable} onClick={() => {
-          if (api) void action('Loading settings…', async () => setModal({ type: 'settings', settings: await api.json<Settings>('/settings') }))
-        }}><Settings2 size={17} /></button>
-        {desktop && <button className="icon-button" title="Minimize to tray" aria-label="Minimize to tray"
-          onClick={() => void invoke('hide_to_tray').catch(error => setNotice(describe(error)))}><Minus size={17} /></button>}
-      </div>
+      <div className="spacer" data-tauri-drag-region={desktop || undefined} />
+      {desktop && <div className="window-controls">
+        <button className="icon-button" title="Minimize window" aria-label="Minimize window"
+          onClick={() => void getCurrentWindow().minimize().catch(error => setNotice(describe(error)))}><Minus size={16} /></button>
+        <button className="icon-button window-close" title="Close to tray" aria-label="Close window"
+          onClick={() => void invoke('hide_to_tray').catch(error => setNotice(describe(error)))}><X size={16} /></button>
+      </div>}
     </header>
     {(notice || contextUnavailable || setupNeeded || busy) && <div className={'notice' + (notice || contextUnavailable ? ' error-notice' : '')} role="status">
       {notice || contextUnavailable ? <CircleAlert size={15} /> : <ActivityIcon size={15} />}
@@ -140,11 +142,11 @@ export function App() {
     </div>}
     <div className="panes" ref={panes} style={{ gridTemplateColumns: explorerWidth + 'px minmax(0, 1fr)' }}>
       <aside className="left-pane" aria-label="Agent explorer">
-        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2>Agent explorer</h2>
+        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2>Models</h2>
           <span className="count-label mono">{models.length}</span><div className="spacer" />
           <button className="icon-button" title="Refresh models" aria-label="Refresh models" onClick={() => void refreshModels()} disabled={!api}><RefreshCw size={14} /></button>
-          <button className="icon-button add-agent" title="New agent" aria-label="New agent" disabled={!models.length}
-            onClick={() => setModal({ type: 'create', model: models.some(model => model.name === modelName) ? modelName : models[0].name })}><Plus size={16} /></button>
+          <button className="icon-button add-agent" title="New agent" aria-label="New agent" disabled={!createModel}
+            onClick={() => createModel && setModal({ type: 'create', model: createModel })}><Plus size={16} /></button>
         </div>
         <ModelTree models={treeModels} loaded={loaded} agents={visibleAgents} activity={activities} chosenModel={modelName} selectedAgent={agent?.id}
           chooseModel={setChosenModel} chooseAgent={chooseAgent} add={name => setModal({ type: 'create', model: name })}
@@ -161,7 +163,7 @@ export function App() {
         : view === 'usage' ? <Usage api={api} revision={revision} />
         : agent ? <>
           <div className="pane-header agent-heading">
-            <span className="agent-avatar"><Bot size={17} /></span>
+            <span className="agent-avatar"><AvatarImage avatar={avatarForAgent(agent)} size={32} /></span>
             <div className="ellipsize leading-tight"><h1 className="ellipsize">{agent.name}</h1>
               <div className="subtle mono heading-detail ellipsize">{agent.model}</div></div>
             <div className="spacer" />
@@ -179,10 +181,22 @@ export function App() {
           <RequestTable {...table} />
         </>
         : <Logs {...table} models={logModels} agents={agents} filters={filters} exportUrl={exportUrl}
+          emptyState={!logSearch && !visibleAgents.length && createModel ? <div className="empty main-empty">
+            <div className="agent-welcome">
+              <AvatarImage avatar={agentAvatars[0]} size={64} />
+              <h2>Create an agent</h2>
+              <p>Assign a local model to give API requests a persistent context.</p>
+              <button className="button primary" onClick={() => setModal({ type: 'create', model: createModel })}>
+                <Plus size={15} /> New agent
+              </button>
+            </div>
+          </div> : undefined}
           change={next => { setFilters(next); setPicked('') }} />}
       </main>
     </div>
-    <StatusBar health={health} reachable={reachable} activities={activities} />
+    <StatusBar health={health} reachable={reachable} activities={activities} openSettings={api && reachable ? () => {
+      void action('Loading settings…', async () => setModal({ type: 'settings', settings: await api.json<Settings>('/settings') }))
+    } : undefined} />
     {modal?.type === 'create' && <AgentDialog close={close} model={modal.model} models={models.map(model => model.name)} save={saveAgent} />}
     {modal?.type === 'edit' && <AgentDialog close={close} agent={modal.agent} model={modal.agent.model} models={models.map(model => model.name)} save={saveAgent} />}
     {api && modal?.type === 'settings' && <SettingsDialog settings={modal.settings} activePort={health?.port || modal.settings.port} close={close}
@@ -250,7 +264,7 @@ function ModelTree({ models, loaded, agents, activity, chosenModel, selectedAgen
                 running.length ? 'queued' : ['error', 'interrupted'].includes(agent.last_status || '') ? 'error' : 'idle'
               return <button key={agent.id} className={'agent-row' + (selectedAgent === agent.id ? ' selected-agent' : '')}
                 aria-pressed={selectedAgent === agent.id} title={agent.name + ' · ' + status} onClick={() => chooseAgent(agent)}>
-                <Bot size={14} /><span className="ellipsize">{agent.name}</span><i className={'dot ' + status} />
+                <AvatarImage avatar={avatarForAgent(agent)} size={20} /><span className="ellipsize">{agent.name}</span><i className={'dot ' + status} />
               </button>
             })}
           </div>
@@ -284,7 +298,9 @@ function Splitter({ label, move }: { label: string; move: (x: number) => void })
     }} />
 }
 
-function StatusBar({ health, reachable, activities }: { health: Health | null; reachable: boolean; activities: Activity[] }) {
+function StatusBar({ health, reachable, activities, openSettings }: {
+  health: Health | null; reachable: boolean; activities: Activity[]; openSettings?: () => void
+}) {
   const active = activities.filter(job => job.status === 'generating')
   const queued = activities.length - active.length
   const ollama = reachable ? health?.ollama : undefined
@@ -297,5 +313,7 @@ function StatusBar({ health, reachable, activities }: { health: Health | null; r
     <div className="spacer" />
     <span title={active[0]?.model}><ActivityIcon size={12} /> <span className="status-activity">{active.length ? active[0].model : 'Idle'}</span></span>
     <span className="request-counts"><b className="mono">{active.length}</b> active <b className="mono">{queued}</b> queued</span>
+    <button className="icon-button" title="Gateway settings" aria-label="Gateway settings"
+      disabled={!openSettings} onClick={openSettings}><Settings2 size={15} /></button>
   </footer>
 }

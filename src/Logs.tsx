@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, ClipboardList, Download, Filter, Link2, SearchX } from 'lucide-react'
 import { type Agent, type Status, type Summary, copy, timeOf } from './api'
 import { Inspector, StatusTag } from './Inspector'
@@ -11,6 +11,7 @@ type TableProps = {
   selected?: string; choose: (id: string) => void; older: () => Promise<void>; hasOlder: boolean
   loading: boolean; error: string
   stop?: (id: string) => void
+  emptyState?: ReactNode
 }
 
 export function Logs({ models, agents, filters, change, exportUrl, ...table }: TableProps & {
@@ -19,7 +20,7 @@ export function Logs({ models, agents, filters, change, exportUrl, ...table }: T
   const statusOptions: Status[] = ['queued', 'generating', 'completed', 'error', 'cancelled', 'interrupted']
   const add = (key: keyof Filters, value: string) => change({ ...filters, [key]: value })
   return <>
-    <div className="pane-header log-heading"><ClipboardList size={17} className="turquoise" /><h1>Request logs</h1><div className="spacer" />
+    <div className="pane-header log-heading"><ClipboardList size={17} className="accent" /><h1>Request logs</h1><div className="spacer" />
       {exportUrl && <ExportLogs url={exportUrl} />}
     </div>
     <div className="log-filters">
@@ -55,7 +56,7 @@ export function ExportLogs({ url }: { url: string }) {
   </div>
 }
 
-export function RequestTable({ requests, selected, choose, older, hasOlder, loading, error, stop }: TableProps) {
+export function RequestTable({ requests, selected, choose, older, hasOlder, loading, error, stop, emptyState }: TableProps) {
   return <div className="log-scroll scrollable">
       {error && <p className="error-text p-3">{error}</p>}
       {requests.length ? <table className="log-table">
@@ -75,7 +76,7 @@ export function RequestTable({ requests, selected, choose, older, hasOlder, load
         {selected === row.request_id && <tr className="request-details"><td colSpan={4}>
           <Inspector request={row} stop={stop && !row.peer && ['queued', 'generating'].includes(row.status) ? () => stop(row.request_id) : undefined} />
         </td></tr>}</Fragment>)}</tbody>
-      </table> : <div className="empty log-empty">
+      </table> : !loading && !error && emptyState ? emptyState : <div className="empty log-empty">
         <SearchX size={24} strokeWidth={1.5} /><h2>{loading ? 'Loading requests…' : 'No matching requests'}</h2>
       </div>}
       {hasOlder && <div className="older"><button className="button compact" onClick={() => void older()} disabled={loading}>Load older requests</button></div>}
