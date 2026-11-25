@@ -8,7 +8,7 @@ use std::{
 use axum::{
     body::Body,
     extract::{Path, Request, State},
-    http::{header, HeaderName, HeaderValue, Method, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,10 +27,11 @@ use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
 use uuid::Uuid;
 
 use crate::{
-    api::{self, body, Api, Payload, REQUEST_ID},
+    api::{self, body, Api, Payload},
+    forwarding::{peer_response, ForwardAudit},
     gateway::Gateway,
     store::Disk,
-    types::Failure,
+    types::{Failure, PeerExecution},
 };
 
 const INVITE_PREFIX: &str = "zephyr1.";
@@ -212,38 +213,32 @@ impl Connections {
             .await
     }
 
-    async fn send(
-        &self,
-        id: Uuid,
-        route: PeerRoute,
-        body: Option<Value>,
-    ) -> Result<Response, Failure> {
-        let (invite, client) = {
-            let state = self.state.lock().await;
-            let peer = state
-                .data
-                .peers
-                .get(&id)
-                .ok_or_else(|| Failure::missing("Paired computer does not exist"))?;
-            let client = state.clients.get(&id).ok_or_else(|| {
-                Failure::new(
-                    "peer_unreachable",
-                    "The saved pairing is invalid. Import a fresh pairing code.",
-                )
-            })?;
-            (peer.invite.clone(), client.clone())
-        };
-        let upstream = invite.send(&client, route, body).await?;
-        let mut response = Response::builder().status(upstream.status());
-        for name in [header::CONTENT_TYPE, HeaderName::from_static(REQUEST_ID)] {
-            if let Some(value) = upstream.headers().get(&name) {
-                response = response.header(name, value);
-            }
-        }
-        Ok(response
-            .header(header::CACHE_CONTROL, "no-store")
-            .body(Body::from_stream(upstream.bytes_stream()))
-            .unwrap())
+    async fn peer(&self, id: Uuid) -> Result<(Peer, Client), Failure> {
+        let state = self.state.lock().await;
+        let peer = state
+            .data
+            .peers
+            .get(&id)
+            .ok_or_else(|| Failure::missing("Paired computer does not exist"))?;
+        let client = state.clients.get(&id).ok_or_else(|| {
+            Failure::new(
+                "peer_unreachable",
+                "The saved pairing is invalid. Import a fresh pairing code.",
+            )
+        })?;
+        Ok((peer.clone(), client.clone()))
+    }
+
+    async fn send(&self, id: Uuid, route: PeerRoute) -> Result<Response, Failure> {
+        let (peer, client) = self.peer(id).await?;
+        let upstream = peer.invite.send(&client, route, None).await?;
+        let status = upstream.status();
+        let headers = upstream.headers().clone();
+        Ok(peer_response(
+            status,
+            &headers,
+            Body::from_stream(upstream.bytes_stream()),
+        ))
     }
 }
 
@@ -608,14 +603,14 @@ async fn peer_health(
     State(connections): State<Connections>,
     Path(id): Path<Uuid>,
 ) -> Result<Response, Failure> {
-    connections.send(id, PeerRoute::Health, None).await
+    connections.send(id, PeerRoute::Health).await
 }
 
 async fn peer_models(
     State(connections): State<Connections>,
     Path(id): Path<Uuid>,
 ) -> Result<Response, Failure> {
-    connections.send(id, PeerRoute::Models, None).await
+    connections.send(id, PeerRoute::Models).await
 }
 
 async fn peer_chat(
@@ -623,7 +618,19 @@ async fn peer_chat(
     Path(id): Path<Uuid>,
     payload: Payload<Value>,
 ) -> Result<Response, Failure> {
-    connections
-        .send(id, PeerRoute::Chat, Some(body(payload)?))
+    let raw = body(payload)?;
+    let (peer, client) = connections.peer(id).await?;
+    let audit = ForwardAudit::start(
+        connections.gateway.clone(),
+        PeerExecution {
+            id,
+            name: peer.name,
+            request_id: None,
+        },
+        &raw,
+    )
+    .await?;
+    audit
+        .reply(peer.invite.send(&client, PeerRoute::Chat, Some(raw)).await)
         .await
 }

@@ -7,6 +7,7 @@ mod api;
 mod connections;
 #[cfg(feature = "desktop")]
 mod desktop;
+mod forwarding;
 mod gateway;
 mod provider;
 mod store;

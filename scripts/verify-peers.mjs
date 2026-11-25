@@ -137,6 +137,7 @@ try {
   assert.equal(await direct(invite, '/models', 'incorrect'), 401)
   assert.equal(await direct(invite, '/models', invite.token), 200)
   assert.equal(await direct(invite, '/logs', invite.token), 404)
+  assert.equal(await direct(invite, '/logs/export', invite.token), 404)
   const ySharingAddress = '127.0.0.1:' + await port()
   await api(y.base, share, 'PUT', { address: ySharingAddress })
   const yInvite = decode((await api(y.base, share + '/invite', 'POST')).code)
@@ -155,6 +156,8 @@ try {
   assert.match(remoteResponse.headers.get('content-type'), /ndjson/)
   const stream = lines(remoteResponse)
   const requestId = remoteResponse.headers.get('x-zephyr-request-id')
+  const logId = remoteResponse.headers.get('x-zephyr-log-id')
+  assert.ok(logId && logId !== requestId)
   assert.equal((await stream.next()).value.request_id, requestId)
   const local = api(y.base, '/chat', 'POST', prompt('local'))
   let done
@@ -170,6 +173,22 @@ try {
   const remoteLog = await api(x.base, '/logs/' + requestId)
   assert.equal(remoteLog.run_id, 'remote')
   await api(y.base, '/logs/' + requestId, 'GET', undefined, 404)
+  const copy = await api(y.base, '/logs/' + logId)
+  assert.equal(copy.peer.request_id, requestId)
+  assert.equal(copy.peer.id, peer.id)
+  assert.equal(copy.response.content, done.message.content)
+  assert.equal(copy.raw_response.frames.at(-1).type, 'done')
+  const remoteSync = await api(y.base, viaY + '/chat', 'POST', prompt('remote-sync'))
+  const syncLog = (await api(y.base, '/logs?full=true&run_id=remote-sync')).items[0]
+  assert.equal(syncLog.raw_response.request_id, remoteSync.request_id)
+  const yUsage = (await api(y.base, '/usage')).models[model]
+  assert.equal(yUsage.requests, 3)
+  assert.equal(yUsage.input_tokens, done.metrics.input_tokens + localResult.metrics.input_tokens + remoteSync.metrics.input_tokens)
+  assert.equal(yUsage.output_tokens, done.metrics.output_tokens + localResult.metrics.output_tokens + remoteSync.metrics.output_tokens)
+  const exportResponse = await fetchApi(y.base, '/logs/export?peer=' + peer.id)
+  assert.equal(exportResponse.status, 200)
+  const peerExport = (await exportResponse.text()).trim().split('\n').map(line => JSON.parse(line))
+  assert.deepEqual(peerExport.map(record => record.request_id), [logId, syncLog.request_id])
   assert.equal((await api(y.base, '/logs/' + localResult.request_id)).run_id, 'local')
   for await (const event of feed) {
     assert.notEqual(event.type, 'delta')
@@ -185,6 +204,7 @@ try {
     options: { num_ctx: 4096, num_predict: 700, temperature: 0.7 },
   }, interrupted.signal)
   const pendingId = pending.headers.get('x-zephyr-request-id')
+  const pendingLogId = pending.headers.get('x-zephyr-log-id')
   assert.ok(pendingId)
   const reader = pending.body.getReader()
   await reader.read()
@@ -197,6 +217,7 @@ try {
     await sleep(70)
   }
   assert.equal(ended?.status, 'cancelled')
+  assert.equal((await api(y.base, '/logs/' + pendingLogId)).status, 'cancelled')
   console.log('PASS Closing a forwarded stream cancels the request on its execution host')
 
   await stop(xProcess)
@@ -205,6 +226,7 @@ try {
   yProcess = await launch(y)
   assert.equal((await connectionState(x)).share.active, true)
   assert.equal((await connectionState(y)).peers[0].id, peer.id)
+  assert.equal((await api(y.base, '/logs/' + logId)).peer.request_id, requestId)
   assert.ok((await api(y.base, viaY + '/health')).ollama.ready)
   await api(x.base, share + '/rotate', 'POST', undefined, 204)
   await api(y.base, viaY + '/models', 'GET', undefined, 401)

@@ -389,6 +389,45 @@ impl Disk {
         Page { items, next_before }
     }
 
+    pub fn usage(&self, query: LogQuery) -> TokenUsage {
+        let mut totals = TokenTotals::default();
+        let mut models = BTreeMap::<&str, TokenTotals>::new();
+        for (_, entry) in self.index.range(..query.before.unwrap_or(u64::MAX)) {
+            let summary = &entry.summary;
+            if query.matches(&summary.meta) {
+                totals.add(&summary.metrics);
+                models
+                    .entry(&summary.meta.model)
+                    .or_default()
+                    .add(&summary.metrics);
+            }
+        }
+        TokenUsage {
+            totals,
+            models: models
+                .into_iter()
+                .map(|(model, counts)| (model.into(), counts))
+                .collect(),
+        }
+    }
+
+    pub fn export_ranges(&self, query: LogQuery) -> (PathBuf, Vec<(u64, u64)>) {
+        let mut ranges: Vec<(u64, u64)> = Vec::new();
+        for (_, entry) in self.index.range(..query.before.unwrap_or(u64::MAX)) {
+            if !query.matches(&entry.summary.meta) {
+                continue;
+            }
+            if let Some((start, length)) = ranges.last_mut() {
+                if *start + *length == entry.offset {
+                    *length += entry.bytes as u64;
+                    continue;
+                }
+            }
+            ranges.push((entry.offset, entry.bytes as u64));
+        }
+        (self.global_log(), ranges)
+    }
+
     pub fn record(&mut self, id: Uuid) -> Result<Record, Failure> {
         self.read_record(id)
     }

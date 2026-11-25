@@ -285,6 +285,11 @@ impl Gateway {
             }
             None => None,
         };
+        if agent.is_none() && call.context_mode.is_some() {
+            return Err(Failure::invalid(
+                "context_mode is only available for agent requests",
+            ));
+        }
         let model = agent
             .as_ref()
             .map(|agent| agent.config.model.clone())
@@ -311,6 +316,10 @@ impl Gateway {
                 sequence: 0,
                 agent_id,
                 agent_name: agent.as_ref().map(|agent| agent.config.name.clone()),
+                context_mode: agent
+                    .as_ref()
+                    .map(|_| call.context_mode.unwrap_or(ContextMode::Append)),
+                peer: None,
                 model,
                 run_id: call.run_id.clone(),
                 task_id: call.task_id.clone(),
@@ -376,6 +385,15 @@ impl Gateway {
 
     fn emit(&self, event: Value) {
         let _ = self.0.events.send(event);
+    }
+
+    pub async fn finish_forwarded(&self, record: Record) -> Result<(), Failure> {
+        let event = json!({"type":"finished","meta":record.meta,"status":record.meta.status,"error":record.error});
+        self.store()
+            .run(move |disk| disk.finish(record, None))
+            .await?;
+        self.emit(event);
+        Ok(())
     }
 
     async fn process(&self, mut queue: mpsc::UnboundedReceiver<Job>) {
@@ -444,12 +462,12 @@ impl Gateway {
             "ollama_version":version,"digest":model.digest,"details":model.details,"modified_at":model.modified_at
         }));
 
-        let mut context = match &job.agent {
-            Some(agent) => {
+        let mut context = match (&job.agent, job.record.meta.context_mode) {
+            (Some(agent), Some(ContextMode::Append)) => {
                 let id = agent.id;
                 self.store().run(move |disk| disk.context(id)).await?
             }
-            None => Context::default(),
+            _ => Context::default(),
         };
         context.messages.extend(job.call.messages.iter().cloned());
         let system = job.record.system_prompt.as_deref();
@@ -596,7 +614,7 @@ impl Gateway {
             "type":"done", "request_id":id, "sequence":job.record.meta.sequence,
             "model":job.record.meta.model,"agent_id":job.record.meta.agent_id,"status":job.record.meta.status,
             "message":job.record.response,"metrics":job.record.metrics,"error":job.record.error,
-            "done_reason":job.record.done_reason
+            "done_reason":job.record.done_reason, "model_version":job.record.model_version
         });
         let meta = job.record.meta.clone();
         if let Err(error) = self
@@ -663,6 +681,7 @@ fn apply_metrics(record: &mut Record, frame: &Value) -> Result<(), Failure> {
     let ms = |key| frame[key].as_u64().map(|ns| ns as f64 / 1_000_000.0);
     let metrics = &mut record.metrics;
     metrics.input_tokens = frame["prompt_eval_count"].as_u64();
+    metrics.cached_input_tokens = frame["prompt_eval_cached_count"].as_u64();
     metrics.output_tokens = frame["eval_count"].as_u64();
     metrics.load_ms = ms("load_duration");
     metrics.prompt_ms = ms("prompt_eval_duration");

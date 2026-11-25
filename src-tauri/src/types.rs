@@ -143,9 +143,17 @@ pub struct Context {
     pub last_sequence: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMode {
+    Append,
+    Replace,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Chat {
     pub model: Option<String>,
+    pub context_mode: Option<ContextMode>,
     #[serde(default)]
     pub messages: Vec<Message>,
     #[serde(default)]
@@ -268,11 +276,20 @@ pub enum Status {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerExecution {
+    pub id: Uuid,
+    pub name: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestMeta {
     pub request_id: Uuid,
     pub sequence: u64,
     pub agent_id: Option<Uuid>,
     pub agent_name: Option<String>,
+    pub context_mode: Option<ContextMode>,
+    pub peer: Option<PeerExecution>,
     pub model: String,
     pub run_id: Option<String>,
     pub task_id: Option<String>,
@@ -285,6 +302,7 @@ pub struct RequestMeta {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Metrics {
     pub input_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub context_limit: Option<u64>,
     pub context_utilization: Option<f64>,
@@ -334,6 +352,7 @@ pub struct LogQuery {
     pub before: Option<u64>,
     pub limit: Option<usize>,
     pub agent: Option<Uuid>,
+    pub peer: Option<Uuid>,
     pub model: Option<String>,
     pub run_id: Option<String>,
     pub task_id: Option<String>,
@@ -345,6 +364,9 @@ pub struct LogQuery {
 impl LogQuery {
     pub fn matches(&self, meta: &RequestMeta) -> bool {
         self.agent.is_none_or(|agent| meta.agent_id == Some(agent))
+            && self
+                .peer
+                .is_none_or(|id| meta.peer.as_ref().is_some_and(|peer| peer.id == id))
             && self.model.as_ref().is_none_or(|model| &meta.model == model)
             && self
                 .run_id
@@ -362,6 +384,45 @@ impl LogQuery {
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next_before: Option<u64>,
+}
+
+#[derive(Default, Serialize)]
+pub struct TokenTotals {
+    pub requests: u64,
+    pub requests_without_counts: u64,
+    pub input_tokens: u64,
+    pub cached_input_tokens: Option<u64>,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+}
+
+impl TokenTotals {
+    pub fn add(&mut self, metrics: &Metrics) {
+        self.requests += 1;
+        if metrics.input_tokens.is_none() || metrics.output_tokens.is_none() {
+            self.requests_without_counts += 1;
+        }
+        self.input_tokens = self
+            .input_tokens
+            .saturating_add(metrics.input_tokens.unwrap_or_default());
+        if let Some(cached) = metrics.cached_input_tokens {
+            self.cached_input_tokens = Some(
+                self.cached_input_tokens
+                    .unwrap_or_default()
+                    .saturating_add(cached),
+            );
+        }
+        self.output_tokens = self
+            .output_tokens
+            .saturating_add(metrics.output_tokens.unwrap_or_default());
+        self.total_tokens = self.input_tokens.saturating_add(self.output_tokens);
+    }
+}
+
+#[derive(Serialize)]
+pub struct TokenUsage {
+    pub totals: TokenTotals,
+    pub models: BTreeMap<String, TokenTotals>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

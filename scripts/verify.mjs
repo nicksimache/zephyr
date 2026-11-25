@@ -267,6 +267,46 @@ try {
   const mirror = logLines(await readFile(join(root, 'agents', agentA.id, 'history.jsonl'), 'utf8'))
   assert.deepEqual(mirror, global.filter(entry => entry.agent_id === agentA.id))
   check('Restart, interrupted-request recovery, retained deleted-agent history and mirrored JSONL')
+
+  const gamma = await json('/agents', 'POST', { name: 'Lavender context', model, system_prompt: 'Keep replies brief.' }, 201)
+  const gammaPath = agentPath(gamma.id)
+  const run = { run_id: 'context-mode-check' }
+  const seed = await json(gammaPath + '/chat', 'POST', prompt('Old saved turn.', run))
+  const supplied = [message('Lavender supplied this history.'), { role: 'assistant', content: 'Understood.' }, message('Say hello.')]
+  const replaced = await json(gammaPath + '/chat', 'POST', prompt('unused', { ...run, context_mode: 'replace', messages: supplied }))
+  const replacementLog = await log(replaced.request_id)
+  assert.equal(replacementLog.context_mode, 'replace')
+  assert.deepEqual(replacementLog.messages_sent.slice(1), supplied)
+  assert.deepEqual((await json(gammaPath + '/context')).messages.slice(0, -1), supplied)
+  const appended = await json(gammaPath + '/chat', 'POST', prompt('One new message.', run))
+  const appendLog = await log(appended.request_id)
+  assert.equal(appendLog.context_mode, 'append')
+  assert.deepEqual(appendLog.messages_sent.slice(1, -2), supplied)
+  assert.equal(appendLog.messages_sent.at(-1).content, 'One new message.')
+  assert.ok(!(await log(seed.request_id)).messages_sent.some(entry => entry.content === supplied[0].content))
+  const previousContext = await json(gammaPath + '/context')
+  await json(gammaPath + '/chat', 'POST', prompt('too long '.repeat(3500), {
+    context_mode: 'replace', options: { num_ctx: 256, num_predict: 4 },
+  }), 413)
+  assert.deepEqual(await json(gammaPath + '/context'), previousContext)
+  await json('/chat', 'POST', prompt('Nothing to run.', { ...run, model: 'zephyr-no-model' }), 404)
+
+  const exportResponse = await http('/logs/export?run_id=context-mode-check&limit=1')
+  assert.equal(exportResponse.status, 200)
+  assert.match(exportResponse.headers.get('content-type'), /ndjson/)
+  assert.match(exportResponse.headers.get('content-disposition'), /attachment; filename=zephyr-requests.jsonl/)
+  const exported = logLines(await exportResponse.text())
+  assert.equal(exported.length, 4)
+  assert.deepEqual(exported.map(record => record.sequence), exported.map(record => record.sequence).sort((a, b) => a - b))
+  assert.deepEqual(exported[1], replacementLog)
+  const usage = await json('/usage?run_id=context-mode-check')
+  const measured = usage.models[model]
+  assert.equal(measured.requests, 3)
+  assert.equal(usage.totals.requests_without_counts, 1)
+  assert.equal(measured.input_tokens, [seed, replaced, appended].reduce((total, item) => total + item.metrics.input_tokens, 0))
+  assert.equal(measured.output_tokens, [seed, replaced, appended].reduce((total, item) => total + item.metrics.output_tokens, 0))
+  assert.equal(usage.totals.total_tokens, measured.input_tokens + measured.output_tokens)
+  check('Lavender context replacement and append, complete ordered export, and per-model token totals')
 } finally {
   live.abort()
   await stop()

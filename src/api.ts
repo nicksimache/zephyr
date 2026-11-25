@@ -19,6 +19,8 @@ export type Meta = {
   sequence: number
   agent_id?: string
   agent_name?: string
+  context_mode?: 'append' | 'replace'
+  peer?: { id: string; name: string; request_id?: string }
   model: string
   run_id?: string
   task_id?: string
@@ -27,7 +29,7 @@ export type Meta = {
   completed_at?: string
   status: Status
 }
-export type Metrics = Partial<Record<'input_tokens' | 'output_tokens' | 'context_limit' | 'context_utilization' |
+export type Metrics = Partial<Record<'input_tokens' | 'cached_input_tokens' | 'output_tokens' | 'context_limit' | 'context_utilization' |
   'load_ms' | 'prompt_ms' | 'generation_ms' | 'tokens_per_second' | 'provider_total_ms' | 'request_ms' | 'queue_ms', number | null>>
 export type Summary = Meta & {
   metrics: Metrics
@@ -37,6 +39,11 @@ export type Summary = Meta & {
 }
 export type Activity = Meta
 export type Page<T> = { items: T[]; next_before?: number | null }
+export type TokenTotals = {
+  requests: number; requests_without_counts: number; input_tokens: number; cached_input_tokens?: number | null
+  output_tokens: number; total_tokens: number
+}
+export type TokenUsage = { totals: TokenTotals; models: Record<string, TokenTotals> }
 export type GatewayEvent =
   | { type: 'snapshot'; activities: Activity[] }
   | { type: 'queued' | 'generating'; activity: Activity }
