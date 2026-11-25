@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Activity as ActivityIcon, Bot, ChevronDown, ChevronRight, CircleAlert, Clipboard, ClipboardList, Database,
+  Activity as ActivityIcon, BarChart3, Bot, ChevronDown, ChevronRight, CircleAlert, Clipboard, ClipboardList, Database,
   HardDrive, Link2, Minus, Plus, Power, RefreshCw, RotateCcw, Server, Settings2, Trash2, X,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
@@ -12,16 +12,16 @@ import {
 import { useGateway, usePage } from './useGateway'
 import { AgentDialog, ConfirmDialog, SettingsDialog } from './Dialogs'
 import { Connections } from './Connections'
-import { Inspector } from './Inspector'
-import { emptyFilters, type Filters, Logs, RequestTable } from './Logs'
+import { emptyFilters, type Filters, ExportLogs, Logs, RequestTable } from './Logs'
+import { Usage } from './Usage'
 
-type View = 'agents' | 'logs' | 'connections'
+type View = 'logs' | 'usage' | 'connections'
 type Modal = { type: 'create'; model: string } | { type: 'edit' | 'delete' | 'reset'; agent: Agent }
   | { type: 'settings'; settings: Settings }
 
 export function App() {
   const { api, startupError, health, reachable, models, loaded, agents, activities, revision, refreshAgents, refreshModels } = useGateway()
-  const [view, setView] = useState<View>('agents')
+  const [view, setView] = useState<View>('logs')
   const [selectedAgent, setSelectedAgent] = useState('')
   const [chosenModel, setChosenModel] = useState('')
   const [picked, setPicked] = useState('')
@@ -30,59 +30,51 @@ export function App() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const panes = useRef<HTMLDivElement>(null)
-  const [widths, setWidths] = useState({ left: 218, right: 296 })
+  const [explorerWidth, setExplorerWidth] = useState(228)
 
   const visibleAgents = agents.filter(agent => !agent.deleted)
   const treeModels = [...models, ...[...new Set(visibleAgents.map(agent => agent.model))]
     .filter(name => !models.some(model => model.name === name))
     .map(name => ({ name, size: 0, digest: '' }))]
   const modelName = chosenModel || treeModels[0]?.name || ''
-  const agent = visibleAgents.find(item => item.id === selectedAgent)
+  const agent = view === 'logs' ? visibleAgents.find(item => item.id === selectedAgent) : undefined
   const logSearch = new URLSearchParams(Object.entries(filters).filter(([, value]) => Boolean(value.trim()))
     .map(([key, value]) => [key, value.trim()])).toString()
-  const path = view === 'logs' ? '/logs?' + logSearch : view === 'agents' && agent ? '/agents/' + agent.id + '/history' : ''
+  const path = view === 'logs' ? (agent ? '/agents/' + agent.id + '/history' : '/logs?' + logSearch) : ''
   const requests = usePage<Summary>(api, path, revision)
-  const live = activities.filter(job => view === 'agents' ? job.agent_id === agent?.id :
+  const live = activities.filter(job => agent ? job.agent_id === agent.id :
     (!filters.agent || filters.agent === job.agent_id) && (!filters.model.trim() || filters.model.trim() === job.model) &&
     (!filters.run_id.trim() || filters.run_id.trim() === job.run_id) && (!filters.status || filters.status === job.status))
   const finishedIds = new Set(requests.items.map(item => item.request_id))
   const displayed = [...live.filter(job => !finishedIds.has(job.request_id)).map(job => ({ ...job, metrics: {} })), ...requests.items]
-  const summary = displayed.find(item => item.request_id === picked) || displayed.find(item => item.status === 'generating') || displayed[0]
   const agentBusy = Boolean(agent && live.length)
+  const exportUrl = api ? api.origin + '/logs/export?' + (agent ? new URLSearchParams({ agent: agent.id }).toString() : logSearch) : undefined
+  const table = {
+    requests: displayed, selected: picked, choose: (id: string) => setPicked(old => old === id ? '' : id),
+    older: requests.older, hasOlder: requests.hasOlder, loading: requests.loading, error: requests.error,
+    stop: api ? (id: string) => { void action('Cancelling request…', () => api.send('/requests/' + id, 'DELETE')) } : undefined,
+  }
 
   useEffect(() => {
     if (!panes.current) return
     const observer = new ResizeObserver(([entry]) => {
-      const available = entry.contentRect.width - 320
-      setWidths(old => {
-        const left = Math.max(153, Math.min(old.left, available - 227))
-        const right = Math.max(227, Math.min(old.right, available - left))
-        return left === old.left && right === old.right ? old : { left, right }
-      })
+      setExplorerWidth(old => clampExplorer(old, entry.contentRect.width))
     })
     observer.observe(panes.current)
     return () => observer.disconnect()
   }, [])
 
-  function resize(panel: 'left' | 'right', delta: number) {
-    const available = (panes.current?.clientWidth || 1000) - 320
-    setWidths(old => {
-      const other = panel === 'left' ? old.right : old.left
-      const min = panel === 'left' ? 153 : 227
-      const width = Math.max(min, Math.min(old[panel] + delta, available - other))
-      return { ...old, [panel]: width }
-    })
-  }
-
   function chooseAgent(agent: Agent) {
     setSelectedAgent(agent.id)
     setChosenModel(agent.model)
     setPicked('')
-    setView('agents')
+    setView('logs')
   }
 
   function changeView(next: View) {
-    if (next !== view) { setView(next); setPicked('') }
+    setView(next)
+    setPicked('')
+    setSelectedAgent('')
   }
 
   async function action<T>(label: string, work: () => Promise<T>) {
@@ -121,8 +113,9 @@ export function App() {
     <header className="app-bar">
       <div className="brand"><img src={icon} alt="" width={25} height={25} /><span>Zephyr</span></div>
       <nav className="app-nav" aria-label="Workspace">
-        <button className={view === 'agents' ? 'current' : ''} aria-current={view === 'agents' ? 'page' : undefined} onClick={() => changeView('agents')}><Bot size={15} /> Agents</button>
         <button className={view === 'logs' ? 'current' : ''} aria-current={view === 'logs' ? 'page' : undefined} onClick={() => changeView('logs')}><ClipboardList size={15} /> Request logs</button>
+        <button className={view === 'usage' ? 'current' : ''} aria-current={view === 'usage' ? 'page' : undefined}
+          onClick={() => changeView('usage')}><BarChart3 size={15} /> Token usage</button>
         <button className={view === 'connections' ? 'current' : ''} aria-current={view === 'connections' ? 'page' : undefined}
           onClick={() => changeView('connections')}><Link2 size={15} /> Connections</button>
       </nav>
@@ -145,9 +138,9 @@ export function App() {
         <button className="button compact" onClick={() => setup('start')}>Start Ollama</button>)}
       {notice && <button className="icon-button" title="Dismiss" aria-label="Dismiss" onClick={() => setNotice('')}><X size={14} /></button>}
     </div>}
-    <div className="panes" ref={panes} style={{ gridTemplateColumns: widths.left + 'px minmax(0, 1fr)' + (view === 'connections' ? '' : ' ' + widths.right + 'px') }}>
-      <aside className="left-pane" aria-label="Models and agents">
-        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2>Models</h2>
+    <div className="panes" ref={panes} style={{ gridTemplateColumns: explorerWidth + 'px minmax(0, 1fr)' }}>
+      <aside className="left-pane" aria-label="Agent explorer">
+        <div className="pane-header tree-heading"><Database size={15} className="subtle" /><h2>Agent explorer</h2>
           <span className="count-label mono">{models.length}</span><div className="spacer" />
           <button className="icon-button" title="Refresh models" aria-label="Refresh models" onClick={() => void refreshModels()} disabled={!api}><RefreshCw size={14} /></button>
           <button className="icon-button add-agent" title="New agent" aria-label="New agent" disabled={!models.length}
@@ -161,19 +154,18 @@ export function App() {
           }) }} disableActions={Boolean(busy || setupNeeded)} />
         {testModelMissing && <div className="test-model"><button className="button compact" onClick={() => setup('pull')} disabled={Boolean(busy)}>
           <HardDrive size={13} /> Download Qwen test model</button></div>}
-        <Splitter label="Resize model panel" move={delta => resize('left', delta)} side="right" />
+        <Splitter label="Resize agent explorer" move={delta => setExplorerWidth(old => clampExplorer(old + delta, panes.current?.clientWidth || 1000))} />
       </aside>
-      <main className="main-pane" aria-label={view === 'connections' ? 'Connections' : view === 'logs' ? 'Request logs' : 'Agent workspace'}>
+      <main className="main-pane" aria-label={view === 'connections' ? 'Connections' : view === 'usage' ? 'Token usage' : 'Request logs'}>
         {view === 'connections' ? <Connections api={api} />
-        : view === 'logs' ? <Logs requests={displayed} models={logModels} agents={agents} filters={filters}
-          change={next => { setFilters(next); setPicked('') }} selected={summary?.request_id}
-          choose={setPicked} older={requests.older} hasOlder={requests.hasOlder} loading={requests.loading} error={requests.error} />
+        : view === 'usage' ? <Usage api={api} revision={revision} />
         : agent ? <>
           <div className="pane-header agent-heading">
             <span className="agent-avatar"><Bot size={17} /></span>
             <div className="ellipsize leading-tight"><h1 className="ellipsize">{agent.name}</h1>
               <div className="subtle mono heading-detail ellipsize">{agent.model}</div></div>
             <div className="spacer" />
+            {exportUrl && <ExportLogs url={exportUrl} />}
             <button className="icon-button" title="Copy agent ID" aria-label="Copy agent ID" onClick={() => {
               void copy(agent.id).then(() => setNotice('Agent ID copied'), error => setNotice(describe(error)))
             }}><Clipboard size={15} /></button>
@@ -184,26 +176,11 @@ export function App() {
             <button className="icon-button remove" title="Delete agent" aria-label="Delete agent" disabled={agentBusy}
               onClick={() => setModal({ type: 'delete', agent })}><Trash2 size={15} /></button>
           </div>
-          <RequestTable requests={displayed} selected={summary?.request_id} choose={setPicked}
-            older={requests.older} hasOlder={requests.hasOlder} loading={requests.loading} error={requests.error} />
+          <RequestTable {...table} />
         </>
-        : <>
-          <div className="pane-header agent-heading"><Bot size={16} className="turquoise" /><h1>Agents</h1></div>
-          <div className="empty main-empty">
-            <span className="empty-icon"><Bot size={23} strokeWidth={1.5} /></span>
-            <h2>{visibleAgents.length ? 'Select an agent' : 'Create an agent'}</h2>
-            <p>{visibleAgents.length ? 'Choose an agent to manage its settings and view request activity.' :
-              'Assign a local model to give API requests a persistent context.'}</p>
-            {!visibleAgents.length && models.length > 0 && <button className="button primary" onClick={() => setModal({ type: 'create', model: modelName })}>
-              <Plus size={15} /> New agent</button>}
-          </div>
-        </>}
+        : <Logs {...table} models={logModels} agents={agents} filters={filters} exportUrl={exportUrl}
+          change={next => { setFilters(next); setPicked('') }} />}
       </main>
-      {view !== 'connections' && <aside className="right-pane" aria-label="Request inspector">
-        <Splitter label="Resize inspector panel" move={delta => resize('right', -delta)} side="left" />
-        <Inspector request={summary} stop={api && summary && live.some(job => job.request_id === summary.request_id) ?
-          () => void action('Cancelling request…', () => api.send('/requests/' + summary.request_id, 'DELETE')) : undefined} />
-      </aside>}
     </div>
     <StatusBar health={health} reachable={reachable} activities={activities} />
     {modal?.type === 'create' && <AgentDialog close={close} model={modal.model} models={models.map(model => model.name)} save={saveAgent} />}
@@ -283,9 +260,13 @@ function ModelTree({ models, loaded, agents, activity, chosenModel, selectedAgen
   </div>
 }
 
-function Splitter({ label, move, side }: { label: string; move: (x: number) => void; side: 'left' | 'right' }) {
+function clampExplorer(width: number, workspace: number) {
+  return Math.max(162, Math.min(width, workspace - 480))
+}
+
+function Splitter({ label, move }: { label: string; move: (x: number) => void }) {
   const lastX = useRef(0)
-  return <div className={'splitter splitter-' + side} role="separator" tabIndex={0} aria-label={label} aria-orientation="vertical"
+  return <div className="splitter" role="separator" tabIndex={0} aria-label={label} aria-orientation="vertical"
     onPointerDown={event => {
       if (event.button !== 0) return
       lastX.current = event.clientX

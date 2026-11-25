@@ -13,9 +13,10 @@ Closing the window hides it in the system tray and leaves the API running. Use *
 
 ## Features
 
-- **Agents** manages a model, system prompt, inference settings, and persistent context per agent. It shows request activity and provides edit, reset, and delete controls.
-- **Request logs** filters by model, agent, run ID, or status. Select a row for timings, token counts, context use, and failure codes. Queued and active requests can be cancelled here.
-- **Connections** shares this computer’s Ollama models or pairs another computer by code. Each computer queues and executes its own inference and keeps its own request logs.
+- **Agent explorer** manages models and agents. Select an agent to view its requests and manage its system prompt, inference settings, and persistent context.
+- **Request logs** filters by model, agent, run ID, or status. Expand a row for timings, token counts, context use, and failure codes. Use **Export JSONL** or copy the filtered export URL for Lavender.
+- **Token usage** totals Ollama-reported input, cached input, output, and combined tokens by model, with an optional run ID filter. A separate count flags requests with missing token counts.
+- **Connections** shares this computer’s Ollama models or pairs another computer by code. Each computer queues and executes its own inference.
 - **Local API** supports stateful and stateless requests, streaming, structured output, tool passthrough, and raw debugging data.
 
 ## Run models on X and Y
@@ -43,7 +44,7 @@ Invoke-RestMethod $localUrl -Method Post -ContentType 'application/json' -Body $
 Invoke-RestMethod $remoteUrl -Method Post -ContentType 'application/json' -Body $onX
 ```
 
-Sharing listens only on the selected IPv4 address. A pairing code carries X’s TLS certificate and a secret. X shares its model list, health check, and stateless inference. Agent configuration, contexts, and request logs stay on X’s local API. Forwarded requests are logged on their execution host. Disconnecting a forwarded stream cancels outstanding work just as disconnecting a local stream does.
+Sharing listens only on the selected IPv4 address. A pairing code carries X’s TLS certificate and a secret. X shares its model list, health check, and stateless inference. X’s local API manages its agents and exposes its Ollama-level records. For requests forwarded through Y, Y also records the request it sent, the response it received, the reported metrics, and the ID of X’s log. The response header `X-Zephyr-Log-Id` identifies Y’s local record. `X-Zephyr-Request-Id` continues to identify X’s request. Disconnecting a forwarded stream signals cancellation on X and records the cancellation on Y.
 
 **Rotate code** on X revokes earlier codes for future requests. Importing the new code for the same address on Y preserves its inference URL. **Stop sharing** closes the listener and retires that pairing. If X changes addresses, share on its new address and pair it again.
 
@@ -116,7 +117,9 @@ Zephyr binds to IPv4 loopback. Use native HTTP clients with JSON bodies and `Con
 | GET /agents/{id}/transcript | Read compact conversation turns with system prompts, caller messages, and model replies |
 | POST /chat | Run stateless inference with an explicit model |
 | GET /logs | Filter and page through global request history |
+| GET /logs/export | Stream every matching finalized record as JSONL, ordered by admission sequence |
 | GET /logs/{id} | Read one complete request and its raw payloads |
+| GET /usage | Sum reported token counts per model for matching finalized requests |
 | GET /activity | Read queued and generating requests with their output so far |
 | GET /events | Subscribe to Server-Sent Events for live activity and changes |
 | DELETE /requests/{id} | Signal cancellation of a queued or active request. Returns 202. |
@@ -188,6 +191,7 @@ Cancel by ID with `DELETE /requests/{id}`. A closed streaming response also sign
 | tools | Optional Ollama tool definitions. The assistant can return tool calls for the caller to handle. |
 | think | Optional Ollama model reasoning control. Support depends on the model. |
 | run_id, task_id | Optional caller-defined strings used to trace development runs. |
+| context_mode | Agent requests only. `append` uses saved agent history plus the supplied messages. `replace` uses the supplied messages as the full working history and saves them with the new reply after success. |
 
 Zephyr sets Ollama's `truncate` and `shift` fields to false. Requests that exceed the input context limit return `context_limit` with HTTP 413, or the corresponding streamed terminal error. Agent context survives errors and cancellations unchanged. Reset it explicitly or raise the context size for later requests. [Ollama chat request definition](https://github.com/ollama/ollama/blob/v0.40.18/api/types.go)
 
@@ -206,27 +210,34 @@ Zephyr sets Ollama's `truncate` and `shift` fields to false. Requests that excee
     pending/
 ```
 
-Each admitted request produces one terminal record in global sequence order. Stateful records are mirrored in the agent's history. Zephyr journals pending work and replays or marks incomplete work as `interrupted` on startup. Request completion, agent archival and context reset are distinct operations. Logs retain the original input and model output, including private content a caller sends.
+Each admitted request produces one terminal record. Forwarded requests can complete concurrently, so the raw on-disk JSONL can contain records in completion order. `GET /logs/export` streams records in admission sequence order. Stateful records are mirrored in the agent's history. Zephyr journals pending work and replays or marks incomplete work as `interrupted` on startup. Logs retain original input and output, including private content a caller sends.
 
 | Fields | Contents |
 | --- | --- |
 | schema_version, request_id, sequence | Record schema, UUID and globally increasing admission order |
 | agent_id, agent_name, model, model_version | Agent and model identity, including Ollama version, digest, and model details when available |
 | run_id, task_id | Optional caller-provided correlation IDs |
+| context_mode, peer | Agent history handling and, for forwarded records, the paired computer and its request ID when available |
 | requested_at, started_at, completed_at | UTC RFC 3339 timestamps |
 | client_request, system_prompt, messages_sent | Original caller JSON, configured system prompt and the message array sent upstream |
-| inference_options, keep_alive, raw_request | Effective parameters and the Ollama request body |
-| raw_response, response, reasoning | Upstream JSON frames or error body, assembled assistant message, and reasoning when returned |
-| metrics | Input/output token counts, context limit and input utilization fraction, load/prompt/generation/queue/total durations in milliseconds, and generation tokens per second |
+| inference_options, keep_alive, raw_request | Parameters and the outbound request. Forwarded records show what Y sent to X. |
+| raw_response, response, reasoning | Upstream JSON frames or error body, assembled assistant message, and reasoning when returned. Forwarded records show the response Y received from X. |
+| metrics | Reported input, cached input, and output token counts, context utilization, timings in milliseconds, and generation tokens per second |
 | status, error, done_reason, context_committed | Terminal outcome, failure or cancellation details, upstream stop reason, and whether context advanced |
 
-`GET /logs` and agent histories return `{items,next_before}` newest first. Use `before=<next_before>` until the cursor is null. The default page size is 30 with a maximum of 100. Match exact `model`, `agent` UUID, `run_id`, `task_id`, or `status`. Use `full=true` to include complete entries. To reconstruct a run, sort its records by `sequence`. The global JSONL also works directly for offline analysis.
+`GET /logs` and agent histories return `{items,next_before}` newest first. Use `before=<next_before>` until the cursor is null. The default page size is 30 with a maximum of 100. Match exact `model`, `agent` UUID, `peer` UUID, `run_id`, `task_id`, or `status`. Use `full=true` to include complete entries. `GET /logs/export` accepts the same filters and returns all matches in one stream. `GET /usage` applies the same filters. Its `total_tokens` adds input and output; cached input is a subset of input whenever Ollama reports it. Requests missing one or both counts are included in `requests_without_counts`.
 
 ## Connect Lavender
 
 1. Add a local provider adapter pointed at `http://127.0.0.1:47833`. Probe `GET /health` for `ollama.ready` and `GET /models` for available local models.
-2. Create one persistent Zephyr agent per independent Lavender context and store its UUID. For stateful requests, send only new messages. For client-managed history, use `POST /chat` with the complete message list.
-3. Pass Lavender's run and task IDs on each call. Store Zephyr's request ID where Lavender can surface it for debugging.
+2. Use one owner for conversation history. If Lavender already manages history, use `POST /chat` with the complete relevant message list, or call an agent with `context_mode: "replace"` to also save the submitted history under that agent. If Zephyr manages the history, create an agent for each independent Lavender conversation and send only new messages using the default `append` mode. The agent’s configured system prompt is prepended in either agent mode, so put each system instruction in one place. Zephyr sends the resulting context to Ollama on every call. Shorter relevant history reduces the input token count.
+3. Pass Lavender's `run_id` and `task_id` on each call. Fetch `GET /logs/export?run_id=<id>` on Lavender’s Zephyr instance to reconstruct a run, including its forwarded calls. For one response, store `X-Zephyr-Log-Id` if present, or `X-Zephyr-Request-Id` for a local call, and read `GET /logs/{id}`.
 4. Map returned assistant content, reasoning and tool calls into Lavender's response types. Lavender runs approved tools and submits the result with role `tool` in the next request.
 5. Use the stream's terminal status to mark request outcomes. Zephyr uses its own HTTP and NDJSON schemas. The Lavender adapter maps Anthropic or OpenAI request and response types to Zephyr's fields.
 6. For inference on a paired computer, use its `/peers/{id}/chat` route with the same stateless request body. Read that computer’s models through `/peers/{id}/models`.
+
+To give Lavender a file for one development run, filter by its run ID in **Request logs** and select **Export JSONL**, or fetch the same export directly.
+
+```powershell
+curl.exe -fsS 'http://127.0.0.1:47833/logs/export?run_id=dev-run-42' --output lavender-run.jsonl
+```

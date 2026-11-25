@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Check, Clipboard, ScanLine, Square } from 'lucide-react'
+import { Check, Clipboard, Square } from 'lucide-react'
 import { type Failure, type Metrics, type Status, type Summary, copy, timeOf } from './api'
 
 const statusLabels: Record<Status, string> = {
@@ -10,7 +10,7 @@ export function StatusTag({ status }: { status: Status }) {
   return <span className={'status-tag ' + status}><i className={'dot ' + status} />{statusLabels[status]}</span>
 }
 
-export function Inspector({ request, stop }: { request?: Summary; stop?: () => void }) {
+export function Inspector({ request, stop }: { request: Summary; stop?: () => void }) {
   const [copied, setCopied] = useState(false)
   function copyValue(value: string) {
     void copy(value).then(() => {
@@ -19,11 +19,9 @@ export function Inspector({ request, stop }: { request?: Summary; stop?: () => v
     }).catch(() => {})
   }
 
-  return <>
-    <div className="pane-header inspector-heading"><ScanLine size={16} className="subtle" /><h2>Request inspector</h2></div>
-    {request ? <>
+  return <section className="inline-inspector" aria-label="Request details">
       <div className="inspector-request">
-        <span className="mono ellipsize" title={request.request_id}>#{request.request_id.slice(0, 8)}</span>
+        <h2 className="mono ellipsize" title={request.request_id}>{request.request_id}</h2>
         <button className="icon-button" aria-label="Copy request ID" title="Copy request ID" onClick={() => copyValue(request.request_id)}>
           {copied ? <Check size={13} /> : <Clipboard size={13} />}
         </button>
@@ -31,15 +29,10 @@ export function Inspector({ request, stop }: { request?: Summary; stop?: () => v
         <StatusTag status={request.status} />
         {stop && <button className="icon-button stop" aria-label="Cancel request" title="Cancel request" onClick={stop}><Square size={13} /></button>}
       </div>
-      <div className="inspector-scroll scrollable">
+      <div className="inspector-body">
         <Overview request={request} />
       </div>
-    </> : <div className="empty inspector-empty">
-      <span className="empty-icon"><ScanLine size={21} strokeWidth={1.5} /></span>
-      <h2>No request selected</h2>
-      <p>Select a request to see its status, token counts, and timings.</p>
-    </div>}
-  </>
+  </section>
 }
 
 function Overview({ request }: { request: Summary }) {
@@ -58,7 +51,9 @@ function Overview({ request }: { request: Summary }) {
       <div className="context-label"><h3>Context utilization</h3><span className="mono">{usage == null ? '—' : (usage * 100).toFixed(1) + '%'}</span></div>
       <progress max={1} value={usage == null ? 0 : Math.min(usage, 1)} aria-label="Context utilization" />
       <span className="subtle mono">{tokens(metrics.input_tokens)} / {tokens(metrics.context_limit)} tokens</span>
+      {metrics.cached_input_tokens != null && <span className="subtle mono"> · {tokens(metrics.cached_input_tokens)} cached</span>}
     </section>
+    <div className="inspect-columns">
     <section className="inspect-section">
       <h3>Timing</h3>
       <dl>
@@ -75,6 +70,9 @@ function Overview({ request }: { request: Summary }) {
         <Row label="Sequence" value={'#' + request.sequence} />
         <Row label="Model" value={request.model} />
         <Row label="Agent" value={request.agent_name || 'Stateless'} />
+        {request.context_mode && <Row label="Context mode" value={request.context_mode} />}
+        {request.peer && <Row label="Execution host" value={request.peer.name} />}
+        {request.peer?.request_id && <Row label="Remote request" value={request.peer.request_id} />}
         <Row label="Received" value={timeOf(request.requested_at)} />
         {request.completed_at && <Row label="Finished" value={timeOf(request.completed_at)} />}
         {request.run_id && <Row label="Run ID" value={request.run_id} />}
@@ -84,6 +82,7 @@ function Overview({ request }: { request: Summary }) {
         {request.done_reason && <Row label="Stop reason" value={request.done_reason} />}
       </dl>
     </section>
+    </div>
     {request.error && <RequestError error={request.error} />}
   </>
 }
@@ -99,7 +98,7 @@ function Row({ label, value, title }: { label: string; value: ReactNode; title?:
 function RequestError({ error }: { error: Failure }) {
   return <section className="inspect-section inspect-error">
     <h3 className="mono">{error.code}</h3>
-    {error.upstream_status && <span className="subtle mono">Ollama HTTP {error.upstream_status}</span>}
+    {error.upstream_status && <span className="subtle mono">Upstream HTTP {error.upstream_status}</span>}
   </section>
 }
 

@@ -1,4 +1,4 @@
-use std::{convert::Infallible, net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{convert::Infallible, io, net::Ipv4Addr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context as _};
 use axum::{
@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::{net::TcpListener, sync::broadcast, task::JoinHandle};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use uuid::Uuid;
@@ -28,6 +29,7 @@ use crate::{
 };
 
 pub(crate) const REQUEST_ID: &str = "x-zephyr-request-id";
+pub(crate) const LOG_ID: &str = "x-zephyr-log-id";
 pub(crate) const BODY_LIMIT: usize = 8 * 1024 * 1024;
 const APP_ORIGINS: [&str; 4] = [
     "http://tauri.localhost",
@@ -108,7 +110,10 @@ fn routes(gateway: Gateway, connections: Connections) -> Router {
             Method::DELETE,
         ])
         .allow_headers([header::CONTENT_TYPE])
-        .expose_headers([HeaderName::from_static(REQUEST_ID)]);
+        .expose_headers([
+            HeaderName::from_static(REQUEST_ID),
+            HeaderName::from_static(LOG_ID),
+        ]);
     Router::new()
         .route("/health", get(health))
         .route("/settings", get(get_settings).put(save_settings))
@@ -129,7 +134,9 @@ fn routes(gateway: Gateway, connections: Connections) -> Router {
         .route("/agents/{id}/transcript", get(transcript))
         .route("/chat", post(stateless))
         .route("/logs", get(logs))
+        .route("/logs/export", get(export_logs))
         .route("/logs/{id}", get(record))
+        .route("/usage", get(usage))
         .route("/requests/{id}", delete(cancel))
         .route("/activity", get(activities))
         .route("/events", get(events))
@@ -325,6 +332,56 @@ async fn logs(State(g): State<Gateway>, Query(query): Query<LogQuery>) -> Api<Va
         .run(move |disk| log_page(disk, query))
         .await
         .map(Json)
+}
+
+async fn usage(State(g): State<Gateway>, Query(query): Query<LogQuery>) -> Api<TokenUsage> {
+    g.store()
+        .run(move |disk| Ok(disk.usage(query)))
+        .await
+        .map(Json)
+}
+
+async fn export_logs(
+    State(g): State<Gateway>,
+    Query(query): Query<LogQuery>,
+) -> Result<Response, Failure> {
+    let (path, ranges) = g
+        .store()
+        .run(move |disk| Ok(disk.export_ranges(query)))
+        .await?;
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| Failure::storage(error.to_string()))?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=zephyr-requests.jsonl",
+            ),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(export_stream(file, ranges)),
+    )
+        .into_response())
+}
+
+fn export_stream(
+    mut file: tokio::fs::File,
+    ranges: Vec<(u64, u64)>,
+) -> impl futures_util::Stream<Item = io::Result<Bytes>> {
+    async_stream::try_stream! {
+        for (offset, mut length) in ranges {
+            file.seek(io::SeekFrom::Start(offset)).await?;
+            while length > 0 {
+                let size = length.min(64 * 1024) as usize;
+                let mut bytes = vec![0; size];
+                file.read_exact(&mut bytes).await?;
+                length -= size as u64;
+                yield Bytes::from(bytes);
+            }
+        }
+    }
 }
 
 async fn agent_history(
