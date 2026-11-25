@@ -11,8 +11,8 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "Zephyr", "width": 1000, "height": 600,
-        "minWidth": 780, "minHeight": 480, "backgroundColor": "#191b1d" }
+      { "label": "main", "title": "", "width": 1000, "height": 600,
+        "minWidth": 780, "minHeight": 480, "backgroundColor": "#e2f1ff" }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data:"

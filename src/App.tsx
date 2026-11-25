@@ -4,7 +4,7 @@ import {
   HardDrive, Link2, Minus, Plus, Power, RefreshCw, RotateCcw, Server, Settings2, Trash2, X,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
-import icon from '../src-tauri/icons/icon.png'
+import { agentAvatars, avatarForAgent, AvatarImage } from './AgentAvatar'
 import {
   type Activity, type Agent, type AgentConfig, type Health, type Model,
   type Settings, type Summary, copy, describe, desktop, formatSize,
@@ -119,7 +119,6 @@ export function App() {
 
   return <div className="app-shell">
     <header className="app-bar">
-      <div className="brand"><img src={icon} alt="" width={25} height={25} /><span>Zephyr</span></div>
       <nav className="app-nav" aria-label="Workspace">
         <button className={view === 'agents' ? 'current' : ''} aria-current={view === 'agents' ? 'page' : undefined} onClick={() => changeView('agents')}><Bot size={15} /> Agents</button>
         <button className={view === 'logs' ? 'current' : ''} aria-current={view === 'logs' ? 'page' : undefined} onClick={() => changeView('logs')}><ClipboardList size={15} /> Request logs</button>
@@ -170,7 +169,7 @@ export function App() {
           choose={setPicked} older={requests.older} hasOlder={requests.hasOlder} loading={requests.loading} error={requests.error} />
         : agent ? <>
           <div className="pane-header agent-heading">
-            <span className="agent-avatar"><Bot size={17} /></span>
+            <span className="agent-avatar"><AvatarImage avatar={avatarForAgent(agent)} size={32} /></span>
             <div className="ellipsize leading-tight"><h1 className="ellipsize">{agent.name}</h1>
               <div className="subtle mono heading-detail ellipsize">{agent.model}</div></div>
             <div className="spacer" />
@@ -188,14 +187,17 @@ export function App() {
             older={requests.older} hasOlder={requests.hasOlder} loading={requests.loading} error={requests.error} />
         </>
         : <>
-          <div className="pane-header agent-heading"><Bot size={16} className="turquoise" /><h1>Agents</h1></div>
+          <div className="pane-header agent-heading"><Bot size={16} className="accent" /><h1>Agents</h1></div>
           <div className="empty main-empty">
-            <span className="empty-icon"><Bot size={23} strokeWidth={1.5} /></span>
-            <h2>{visibleAgents.length ? 'Select an agent' : 'Create an agent'}</h2>
-            <p>{visibleAgents.length ? 'Choose an agent to manage its settings and view request activity.' :
-              'Assign a local model to give API requests a persistent context.'}</p>
-            {!visibleAgents.length && models.length > 0 && <button className="button primary" onClick={() => setModal({ type: 'create', model: modelName })}>
-              <Plus size={15} /> New agent</button>}
+            <div className="agent-welcome">
+              <AvatarImage avatar={agentAvatars[0]} size={64} />
+              <h2>{visibleAgents.length ? 'Select an agent' : 'Create an agent'}</h2>
+              <p>{visibleAgents.length ? 'Choose an agent to manage its settings and view request activity.' :
+                'Assign a local model to give API requests a persistent context.'}</p>
+              {!visibleAgents.length && models.length > 0 && <button className="button primary" onClick={() => setModal({
+                type: 'create', model: models.some(model => model.name === modelName) ? modelName : models[0].name,
+              })}><Plus size={15} /> New agent</button>}
+            </div>
           </div>
         </>}
       </main>
@@ -273,7 +275,7 @@ function ModelTree({ models, loaded, agents, activity, chosenModel, selectedAgen
                 running.length ? 'queued' : ['error', 'interrupted'].includes(agent.last_status || '') ? 'error' : 'idle'
               return <button key={agent.id} className={'agent-row' + (selectedAgent === agent.id ? ' selected-agent' : '')}
                 aria-pressed={selectedAgent === agent.id} title={agent.name + ' · ' + status} onClick={() => chooseAgent(agent)}>
-                <Bot size={14} /><span className="ellipsize">{agent.name}</span><i className={'dot ' + status} />
+                <AvatarImage avatar={avatarForAgent(agent)} size={20} /><span className="ellipsize">{agent.name}</span><i className={'dot ' + status} />
               </button>
             })}
           </div>

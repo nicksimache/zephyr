@@ -13,7 +13,7 @@ export function Logs({ requests, models, agents, filters, change, selected, choo
   const statusOptions: Status[] = ['queued', 'generating', 'completed', 'error', 'cancelled', 'interrupted']
   const add = (key: keyof Filters, value: string) => change({ ...filters, [key]: value })
   return <>
-    <div className="pane-header log-heading"><ClipboardList size={17} className="turquoise" /><h1>Request logs</h1></div>
+    <div className="pane-header log-heading"><ClipboardList size={17} className="accent" /><h1>Request logs</h1></div>
     <div className="log-filters">
       <div className="filter-caption"><Filter size={13} /><span>Filters</span><div className="spacer" />
         {Object.values(filters).some(Boolean) && <button className="text-button" onClick={() => change(emptyFilters)}>Clear filters</button>}
